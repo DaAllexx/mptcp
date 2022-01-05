@@ -86,6 +86,7 @@ int sysctl_tcp_fack __read_mostly = 1;
 int sysctl_tcp_reordering __read_mostly = TCP_FASTRETRANS_THRESH;
 int sysctl_tcp_max_reordering __read_mostly = 300;
 EXPORT_SYMBOL(sysctl_tcp_reordering);
+int sysctl_tcp_resched __read_mostly;
 int sysctl_tcp_dsack __read_mostly = 1;
 int sysctl_tcp_app_win __read_mostly = 31;
 int sysctl_tcp_adv_win_scale __read_mostly = 1;
@@ -741,8 +742,10 @@ static void tcp_rtt_estimator(struct sock *sk, long mrtt_us)
 		tp->rttvar_us = max(tp->mdev_us, tcp_rto_min_us(sk));
 		tp->mdev_max_us = tp->rttvar_us;
 		tp->rtt_seq = tp->snd_nxt;
+		tp->rtt_init = max(1U, srtt);
 	}
 	tp->srtt_us = max(1U, srtt);
+	tp->rtt_last = mrtt_us << 3;
 }
 
 /* Set the sk_pacing_rate to allow proper sizing of TSO packets.
@@ -3164,6 +3167,21 @@ static int tcp_clean_rtx_queue(struct sock *sk, int prior_fackets,
 	}
 
 	rtt_update = tcp_ack_update_rtt(sk, flag, seq_rtt_us, sack_rtt_us);
+
+	if (sysctl_tcp_resched && (flag & FLAG_ACKED) && rtt_update) {
+		s32 delta = tp->rtt_lastresched - tp->rtt_last;
+		if (delta < 0)
+			delta = -delta;
+		if (usecs_to_jiffies(delta >> 4) <=
+		    msecs_to_jiffies(sysctl_tcp_resched)) {
+			tp->mptcp_noresched = true;
+		} else {
+			tp->mptcp_noresched = false;
+			tp->rtt_lastresched = tp->rtt_last;
+		}
+	} else if (!sysctl_tcp_resched) {
+		tp->mptcp_noresched = true;
+	}
 
 	if (flag & FLAG_ACKED) {
 		const struct tcp_congestion_ops *ca_ops

@@ -223,6 +223,8 @@ struct tcp_sock {
 
 	u32	tsoffset;	/* timestamp offset */
 
+	u32	presched;	/* mptcp-sttf pre-scheduling */
+
 	struct list_head tsq_node; /* anchor in tsq_tasklet.head list */
 	unsigned long	tsq_flags;
 
@@ -266,6 +268,12 @@ struct tcp_sock {
 	u32	rttvar_us;	/* smoothed mdev_max			*/
 	u32	rtt_seq;	/* sequence number to update rttvar	*/
 
+	u32	rtt_last;	/* mptcp-sttf: last rtt sample */
+	u32	rtt_init;	/* mptcp-sttf: first rtt sample */
+	u32	rtt_lastresched;/* mptcp-sttf: last re-scheduling */
+	bool	mptcp_noresched;/* mptcp-sttf: reschedule? */
+	bool	rtt_nodiff;
+
 	u32	packets_out;	/* Packets which are "in flight"	*/
 	u32	retrans_out;	/* Retransmitted packets out		*/
 	u32	max_packets_out;  /* max packets_out in last window */
@@ -295,6 +303,8 @@ struct tcp_sock {
 	u32	prr_delivered;	/* Number of newly delivered packets to
 				 * receiver in Recovery. */
 	u32	prr_out;	/* Total number of pkts sent during Recovery. */
+
+	u32	tot_packets;	/* mptcp-sttf: total packets sent */
 
  	u32	rcv_wnd;	/* Current receiver window		*/
 	u32	write_seq;	/* Tail(+1) of data held in tcp send buffer */
@@ -369,6 +379,8 @@ struct tcp_sock {
 			   * while socket was owned by user.
 			   */
 
+	int logmask;	/* mptcp-sttf: log helper */
+
 #ifdef CONFIG_TCP_MD5SIG
 /* TCP AF-Specific parts; only used by MD5 Signature support so far */
 	const struct tcp_sock_af_ops	*af_specific;
@@ -407,12 +419,15 @@ struct tcp_sock {
 		is_master_sk:1,
 		close_it:1,	/* Must close socket in mptcp_data_ready? */
 		closing:1,
-		mptcp_ver:4;
+		mptcp_ver:4,
+        mptcp_sched_setsockopt:1;
 	struct mptcp_tcp_sock *mptcp;
 #ifdef CONFIG_MPTCP
+#define MPTCP_SCHED_NAME_MAX 16
 	struct hlist_nulls_node tk_table;
 	u32		mptcp_loc_token;
 	u64		mptcp_loc_key;
+	char    mptcp_sched_name[MPTCP_SCHED_NAME_MAX];
 #endif /* CONFIG_MPTCP */
 };
 

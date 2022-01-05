@@ -82,6 +82,7 @@ void tcp_event_new_data_sent(struct sock *sk, const struct sk_buff *skb)
 	tp->snd_nxt = TCP_SKB_CB(skb)->end_seq;
 
 	tp->packets_out += tcp_skb_pcount(skb);
+	tp->tot_packets += tcp_skb_pcount(skb);
 	if (!prior_packets || icsk->icsk_pending == ICSK_TIME_EARLY_RETRANS ||
 	    icsk->icsk_pending == ICSK_TIME_LOSS_PROBE) {
 		tcp_rearm_rto(sk);
@@ -1649,6 +1650,7 @@ unsigned int tcp_cwnd_test(const struct tcp_sock *tp,
 	halfcwnd = max(cwnd >> 1, 1U);
 	return min(halfcwnd, cwnd - in_flight);
 }
+EXPORT_SYMBOL_GPL(tcp_cwnd_test);
 
 /* Initialize TSO state of a skb.
  * This must be invoked the first time we consider transmitting
@@ -1704,6 +1706,7 @@ bool tcp_snd_wnd_test(const struct tcp_sock *tp, const struct sk_buff *skb,
 
 	return !after(end_seq, tcp_wnd_end(tp));
 }
+EXPORT_SYMBOL(tcp_snd_wnd_test);
 
 /* This checks if the data bearing packet SKB (usually tcp_send_head(sk))
  * should be put on the wire right now.  If so, it returns the number of
@@ -2106,7 +2109,8 @@ bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 
 		cwnd_quota = tcp_cwnd_test(tp, skb);
 		if (!cwnd_quota) {
-			is_cwnd_limited = true;
+			if (!sysctl_mptcp_exp_scheduling)
+				is_cwnd_limited = true;
 			if (push_one == 2)
 				/* Force out a loss probe pkt. */
 				cwnd_quota = 1;
@@ -2188,7 +2192,11 @@ repair:
 		/* Send one loss probe per tail loss episode. */
 		if (push_one != 2)
 			tcp_schedule_loss_probe(sk);
-		if (tp->ops->cwnd_validate)
+		if (sysctl_mptcp_exp_scheduling) {
+			is_cwnd_limited |= (tcp_packets_in_flight(tp) >=
+					    tp->snd_cwnd);
+			tcp_cwnd_validate(sk, is_cwnd_limited);
+		} else if (tp->ops->cwnd_validate)
 			tp->ops->cwnd_validate(sk, is_cwnd_limited);
 		return false;
 	}
