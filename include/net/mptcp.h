@@ -176,7 +176,7 @@ struct mptcp_tcp_sock {
 		rcv_low_prio:1, /* Peer sent low-prio option to us */
 		send_mp_prio:1, /* Trigger to send mp_prio on this socket */
 		pre_established:1; /* State between sending 3rd ACK and
-				    * receiving the fourth ack of new subflows.
+				    receiving the fourth ack of new subflows.
 				    */
 
 	/* isn: needed to translate abs to relative subflow seqnums */
@@ -187,7 +187,7 @@ struct mptcp_tcp_sock {
 	u8	rem_id;
 	u8	sk_err;
 
-#define MPTCP_SCHED_SIZE 16
+#define MPTCP_SCHED_SIZE 128
 	u8	mptcp_sched[MPTCP_SCHED_SIZE] __aligned(8);
 
 	int	init_rcv_wnd;
@@ -251,8 +251,11 @@ struct mptcp_sched_ops {
 						int *reinject,
 						struct sock **subsk,
 						unsigned int *limit);
+	bool			(*pre_schedule)(struct sock *meta_sk);
 	void			(*init)(struct sock *sk);
 	void			(*release)(struct sock *sk);
+	void			(*begin_schedule)(struct sock *sk);
+	void			(*set_state)(struct sock *sk, u8 new_state);
 
 	char			name[MPTCP_SCHED_NAME_MAX];
 	struct module		*owner;
@@ -294,6 +297,8 @@ struct mptcp_cb {
 	 * reinject-queue only the next and prev pointers are regularly
 	 * accessed. Thus, the whole data-path is on a single cache-line.
 	 */
+
+	u32	last_resched;	/* mptcp-sttf: last re-scheduling */
 
 	u64	csum_cutoff_seq;
 	u64	infinite_rcv_seq;
@@ -659,6 +664,8 @@ extern int sysctl_mptcp_version;
 extern int sysctl_mptcp_checksum;
 extern int sysctl_mptcp_debug;
 extern int sysctl_mptcp_syn_retries;
+extern int sysctl_mptcp_exp_scheduling;
+extern int sysctl_mptcp_sched_print;
 
 extern struct workqueue_struct *mptcp_wq;
 
@@ -867,6 +874,9 @@ void mptcp_reqsk_init(struct request_sock *req, const struct sock *sk,
 int mptcp_conn_request(struct sock *sk, struct sk_buff *skb);
 void mptcp_enable_sock(struct sock *sk);
 void mptcp_disable_sock(struct sock *sk);
+void mptcp_set_logmask(struct sock *sk, int val);
+int mptcp_get_logmask(struct sock *sk);
+void mptcp_enable_static_key(void);
 void mptcp_disable_static_key(void);
 void mptcp_cookies_reqsk_init(struct request_sock *req,
 			      struct mptcp_options_received *mopt,
@@ -903,6 +913,8 @@ bool subflow_is_backup(const struct tcp_sock *tp);
 struct sock *get_available_subflow(struct sock *meta_sk, struct sk_buff *skb,
 				   bool zero_wnd_test);
 extern struct mptcp_sched_ops mptcp_sched_default;
+
+void mptcp_calc_sched(struct sock *meta_sk, struct sock *subsk, int log);
 
 /* Initializes function-pointers and MPTCP-flags */
 static inline void mptcp_init_tcp_sock(struct sock *sk)

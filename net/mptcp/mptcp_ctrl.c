@@ -71,6 +71,14 @@ int sysctl_mptcp_checksum __read_mostly = 1;
 int sysctl_mptcp_debug __read_mostly;
 EXPORT_SYMBOL(sysctl_mptcp_debug);
 int sysctl_mptcp_syn_retries __read_mostly = 3;
+int sysctl_mptcp_exp_scheduling __read_mostly = 0;
+
+/* MPTCP-SCHED: print
+ * 	0 == default behavior
+ * 	1 == print sched decisions
+ */
+int sysctl_mptcp_sched_print __read_mostly = 0;
+EXPORT_SYMBOL(sysctl_mptcp_sched_print);
 
 bool mptcp_init_failed __read_mostly;
 
@@ -166,6 +174,20 @@ static struct ctl_table mptcp_table[] = {
 		.mode		= 0644,
 		.maxlen		= MPTCP_SCHED_NAME_MAX,
 		.proc_handler	= proc_mptcp_scheduler,
+	},
+	{
+		.procname = "mptcp_exp_scheduling",
+		.data = &sysctl_mptcp_exp_scheduling,
+		.maxlen = sizeof(int),
+		.mode = 0644,
+		.proc_handler = &proc_dointvec
+	},
+	{
+		.procname = "mptcp_sched_print",
+		.data = &sysctl_mptcp_sched_print,
+		.maxlen = sizeof(int),
+		.mode = 0644,
+		.proc_handler = &proc_dointvec
 	},
 	{ }
 };
@@ -493,6 +515,23 @@ void mptcp_disable_sock(struct sock *sk)
 		mptcp_disable_static_key();
 	}
 }
+
+void mptcp_set_logmask(struct sock *sk, int val)
+{
+	struct sock *meta_sk = mptcp_meta_sk(sk);
+	struct tcp_sock *tp = tcp_sk(meta_sk);
+
+	tp->logmask = val;
+}
+
+int mptcp_get_logmask(struct sock *sk)
+{
+	struct sock *meta_sk = mptcp_meta_sk(sk);
+	struct tcp_sock *tp = tcp_sk(meta_sk);
+
+	return tp->logmask;
+}
+EXPORT_SYMBOL(mptcp_get_logmask);
 
 void mptcp_connect_init(struct sock *sk)
 {
@@ -1323,7 +1362,13 @@ static int mptcp_alloc_mpcb(struct sock *meta_sk, __u64 remote_key,
 	}
 #endif
 
-	meta_tp->mptcp = NULL;
+	/* to allow schedulers storing aux data */
+	meta_tp->mptcp = kmem_cache_zalloc(mptcp_sock_cache, GFP_ATOMIC);
+	if (!meta_tp->mptcp) {
+		kmem_cache_free(mptcp_cb_cache, mpcb);
+		sk_free(master_sk);
+		return -ENOBUFS;
+	}
 
 	meta_tp->write_seq = (u32)snd_idsn;
 	meta_tp->snd_sml = meta_tp->write_seq;

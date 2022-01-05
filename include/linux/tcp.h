@@ -255,6 +255,8 @@ struct tcp_sock {
 
 	u32	tsoffset;	/* timestamp offset */
 
+	u32	presched;	/* mptcp-sttf pre-scheduling */
+
 	struct list_head tsq_node; /* anchor in tsq_tasklet.head list */
 	struct list_head tsorted_sent_queue; /* time-sorted sent but un-SACKed skbs */
 
@@ -315,6 +317,12 @@ struct tcp_sock {
 	u32	rtt_seq;	/* sequence number to update rttvar	*/
 	struct  minmax rtt_min;
 
+	u32	rtt_last;	/* mptcp-sttf: last rtt sample */
+	u32	rtt_init;	/* mptcp-sttf: first rtt sample */
+	u32	rtt_lastresched;/* mptcp-sttf: last re-scheduling */
+	bool	mptcp_noresched;/* mptcp-sttf: reschedule? */
+	bool	rtt_nodiff;
+
 	u32	packets_out;	/* Packets which are "in flight"	*/
 	u32	retrans_out;	/* Retransmitted packets out		*/
 	u32	max_packets_out;  /* max packets_out in last window */
@@ -353,6 +361,7 @@ struct tcp_sock {
 	u64	delivered_mstamp; /* time we reached "delivered" */
 	u32	rate_delivered;    /* saved rate sample: packets delivered */
 	u32	rate_interval_us;  /* saved rate sample: time elapsed */
+	u32	tot_packets;	/* mptcp-sttf: total packets sent */
 
  	u32	rcv_wnd;	/* Current receiver window		*/
 	u32	rcv_right_edge;	/* Highest announced right edge */
@@ -440,6 +449,8 @@ struct tcp_sock {
 	u32	mtu_info; /* We received an ICMP_FRAG_NEEDED / ICMPV6_PKT_TOOBIG
 			   * while socket was owned by user.
 			   */
+
+	int logmask;	/* mptcp-sttf: log helper */
 
 #ifdef CONFIG_TCP_MD5SIG
 /* TCP AF-Specific parts; only used by MD5 Signature support so far */

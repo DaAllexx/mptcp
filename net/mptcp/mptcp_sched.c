@@ -3,7 +3,10 @@
 #include <linux/bug.h>
 #include <linux/module.h>
 #include <net/mptcp.h>
-#include <trace/events/tcp.h>
+
+#define __sdebug(fmt) "[sched] %s:%d::" fmt, __FUNCTION__, __LINE__
+#define sdebug(fmt, args...) if (sysctl_mptcp_sched_debug) printk(KERN_WARNING __sdebug(fmt), ## args)
+
 
 static DEFINE_SPINLOCK(mptcp_sched_list_lock);
 static LIST_HEAD(mptcp_sched_list);
@@ -69,7 +72,8 @@ static bool mptcp_is_temp_unavailable(struct sock *sk,
 				      bool zero_wnd_test)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
-	unsigned int mss_now;
+	struct sock *meta_sk = mptcp_meta_sk(sk);
+	unsigned int mss_now, space, in_flight;
 
 	if (inet_csk(sk)->icsk_ca_state == TCP_CA_Loss) {
 		/* If SACK is disabled, and we got a loss, TCP does not exit
@@ -93,7 +97,14 @@ static bool mptcp_is_temp_unavailable(struct sock *sk,
 			return true;
 	}
 
-	mss_now = tcp_current_mss(sk);
+	/* If TSQ is already throttling us, do not send on this subflow. When
+	 * TSQ gets cleared the subflow becomes eligible again.
+	 */
+	if (test_bit(TSQ_THROTTLED, &tp->tsq_flags)) {
+		if (meta_sk && sysctl_mptcp_sched_print)
+			mptcp_calc_sched(meta_sk, sk, 4);
+		return true;
+	}
 
 	/* Not even a single spot in the cwnd */
 	if (mptcp_subflow_queued(sk, tcp_tso_segs(sk, mss_now)) >= tp->snd_cwnd)
@@ -155,6 +166,7 @@ static struct sock
 			    bool zero_wnd_test, bool *force)
 {
 	struct sock *bestsk = NULL;
+	struct sock *meta_sk = mpcb->meta_sk;
 	u32 min_srtt = 0xffffffff;
 	bool found_unused = false;
 	bool found_unused_una = false;
@@ -177,14 +189,22 @@ static struct sock
 			 */
 			continue;
 
-		if (mptcp_is_def_unavailable(sk))
+		if (mptcp_is_def_unavailable(sk)) {
+			if (sysctl_mptcp_sched_print)
+				mptcp_calc_sched(meta_sk, sk, 2);
 			continue;
+		}
 
 		if (mptcp_is_temp_unavailable(sk, skb, zero_wnd_test)) {
 			if (unused)
 				found_unused_una = true;
+			if (sysctl_mptcp_sched_print)
+				mptcp_calc_sched(meta_sk, sk, 3);
 			continue;
 		}
+
+		if (sysctl_mptcp_sched_print)
+			mptcp_calc_sched(meta_sk, sk, 0);
 
 		if (unused) {
 			if (!found_unused) {
@@ -237,7 +257,22 @@ struct sock *get_available_subflow(struct sock *meta_sk, struct sk_buff *skb,
 {
 	struct mptcp_cb *mpcb = tcp_sk(meta_sk)->mpcb;
 	struct sock *sk;
-	bool looping = false, force;
+	bool force;
+
+	/* if there is only one subflow, bypass the scheduling function */
+	if (mpcb->cnt_subflows == 1) {
+		sk = (struct sock *)mpcb->connection_list;
+		if (!mptcp_is_available(sk, skb, zero_wnd_test)) {
+			if (sk &&
+			    mptcp_is_temp_unavailable(sk, skb, zero_wnd_test) &&
+			    sysctl_mptcp_sched_print)
+				mptcp_calc_sched(meta_sk, sk, 1);
+			sk = NULL;
+		}
+		if (sk && sysctl_mptcp_sched_print)
+			mptcp_calc_sched(meta_sk, sk, 1);
+		return sk;
+	}
 
 	/* Answer data_fin on same subflow!!! */
 	if (meta_sk->sk_shutdown & RCV_SHUTDOWN &&
@@ -435,12 +470,9 @@ static struct sk_buff *mptcp_next_segment(struct sock *meta_sk,
 	mss_now = tcp_current_mss(*subsk);
 
 	if (!*reinject && unlikely(!tcp_snd_wnd_test(tcp_sk(meta_sk), skb, mss_now))) {
-		/* an active flow is selected, but segment will not be sent due
-		 * to no more space in send window
-		 * this means the meta is receive window limited
-		 * the subflow might also be, if we have nothing to reinject
-		 */
-		tcp_chrono_start(meta_sk, TCP_CHRONO_RWND_LIMITED);
+		if (sysctl_mptcp_sched_print)
+			mptcp_calc_sched(meta_sk, *subsk, 5);
+
 		skb = mptcp_rcv_buf_optimization(*subsk, 1);
 		if (skb)
 			*reinject = -1;

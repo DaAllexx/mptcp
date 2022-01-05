@@ -67,6 +67,7 @@ void tcp_event_new_data_sent(struct sock *sk, struct sk_buff *skb)
 		tp->highest_sack = skb;
 
 	tp->packets_out += tcp_skb_pcount(skb);
+	tp->tot_packets += tcp_skb_pcount(skb);
 	if (!prior_packets || icsk->icsk_pending == ICSK_TIME_LOSS_PROBE)
 		tcp_rearm_rto(sk);
 
@@ -2385,6 +2386,8 @@ bool tcp_write_xmit(struct sock *sk, unsigned int mss_now, int nonagle,
 
 		cwnd_quota = tcp_cwnd_test(tp, skb);
 		if (!cwnd_quota) {
+			if (!sysctl_mptcp_exp_scheduling)
+				is_cwnd_limited = true;
 			if (push_one == 2)
 				/* Force out a loss probe pkt. */
 				cwnd_quota = 1;
@@ -2464,7 +2467,13 @@ repair:
 
 		/* Send one loss probe per tail loss episode. */
 		if (push_one != 2)
-			tcp_schedule_loss_probe(sk, false);
+			tcp_schedule_loss_probe(sk);
+		if (sysctl_mptcp_exp_scheduling) {
+			is_cwnd_limited |= (tcp_packets_in_flight(tp) >=
+					    tp->snd_cwnd);
+			tcp_cwnd_validate(sk, is_cwnd_limited);
+		} else if (tp->ops->cwnd_validate)
+			tp->ops->cwnd_validate(sk, is_cwnd_limited);
 		return false;
 	}
 	return !tp->packets_out && !tcp_write_queue_empty(sk);
@@ -3878,4 +3887,4 @@ int tcp_rtx_synack(const struct sock *sk, struct request_sock *req)
 	}
 	return res;
 }
-EXPORT_SYMBOL(tcp_rtx_synack);
+EXPORT_SYMBOL(tcp_rtx_synack);	

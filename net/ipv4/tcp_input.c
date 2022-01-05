@@ -780,8 +780,10 @@ static void tcp_rtt_estimator(struct sock *sk, long mrtt_us)
 		tp->rttvar_us = max(tp->mdev_us, tcp_rto_min_us(sk));
 		tp->mdev_max_us = tp->rttvar_us;
 		tp->rtt_seq = tp->snd_nxt;
+		tp->rtt_init = max(1U, srtt);
 	}
 	tp->srtt_us = max(1U, srtt);
+	tp->rtt_last = mrtt_us << 3;
 }
 
 static void tcp_update_pacing_rate(struct sock *sk)
@@ -3195,6 +3197,21 @@ static int tcp_clean_rtx_queue(struct sock *sk, u32 prior_fack,
 	}
 	rtt_update = tcp_ack_update_rtt(sk, flag, seq_rtt_us, sack_rtt_us,
 					ca_rtt_us, sack->rate);
+
+	if (sysctl_tcp_resched && (flag & FLAG_ACKED) && rtt_update) {
+		s32 delta = tp->rtt_lastresched - tp->rtt_last;
+		if (delta < 0)
+			delta = -delta;
+		if (usecs_to_jiffies(delta >> 4) <=
+		    msecs_to_jiffies(sysctl_tcp_resched)) {
+			tp->mptcp_noresched = true;
+		} else {
+			tp->mptcp_noresched = false;
+			tp->rtt_lastresched = tp->rtt_last;
+		}
+	} else if (!sysctl_tcp_resched) {
+		tp->mptcp_noresched = true;
+	}
 
 	if (flag & FLAG_ACKED) {
 		flag |= FLAG_SET_XMIT_TIMER;  /* set TLP or RTO timer */

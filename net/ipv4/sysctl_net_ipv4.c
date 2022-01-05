@@ -802,6 +802,13 @@ static struct ctl_table ipv4_net_table[] = {
 		.proc_handler	= proc_tcp_congestion_control,
 	},
 	{
+		.procname	= "tcp_logmask",
+		.data		= &sysctl_tcp_logmask,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
 		.procname	= "tcp_keepalive_time",
 		.data		= &init_net.ipv4.sysctl_tcp_keepalive_time,
 		.maxlen		= sizeof(int),
@@ -1062,6 +1069,13 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname	= "tcp_max_reordering",
 		.data		= &init_net.ipv4.sysctl_tcp_max_reordering,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec
+	},
+	{
+		.procname	= "tcp_resched",
+		.data		= &sysctl_tcp_resched,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec
